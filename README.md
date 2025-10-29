@@ -1,7 +1,7 @@
 # Ethereum_SPA
 A Second Price Auction contract on Ethereum
 
-##MINT NFT
+### Mint NFT
 1. get a publicly available link to an image.
 2. put the link in the image field of NFT_metadata.json
 3. commit and push NFT_metadata.json to github
