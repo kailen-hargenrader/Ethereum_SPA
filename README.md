@@ -14,4 +14,4 @@ A Second Price Auction contract on Ethereum
 10. paste uri into the uri field
 11. click safeMint button (costs gas)
 12. Copy token_id (output field) to NFTs.json to keep track of them
-13. Call Owner function on the token_id (costs gas)
+13. Call Owner function on the token_id
