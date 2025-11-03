@@ -58,7 +58,17 @@ Set itemTokenID to zero before issuing NFT to prevent reentrancy attacks.
 WHY: Checks and effects.
 */
 
+// Events
+event NFTPosted(address indexed seller, uint256 indexed tokenId);
+event BidCommitted(address indexed bidder, bytes32 hashedBid);
+event TransitionToReveal(address indexed caller);
+event BidRevealed(address indexed bidder, uint256 bid, uint256 salt, uint256 topBid, uint256 secondTopBid);
+event TransitionToEnd(address indexed caller);
+event RefundClaimed(address indexed bidder, uint256 amount);
+event NFTClaimed(address indexed bidder, uint256 tokenId);
+event PullOut(address indexed bidder, uint256 refundAmount);
 
+// SPA
 contract SecondPriceAuction is Ownable, IERC721Receiver {
     address payable public seller;
     address payable public topBidder;
@@ -121,6 +131,7 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         require(itemTokenId == 0, "Item already posted for auction.");
         itemTokenId = tokenId;
         pendingReturns[seller] += noPostingFee;
+        emit NFTPosted(seller, tokenId);
         return IERC721Receiver.onERC721Received.selector;
     }
 
@@ -128,6 +139,7 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         require(commit, "Not in commit stage.");
         require(msg.value == reservePrice, "Reserve price must be paid upfront.");
         bidSaltHashes[msg.sender] = hashedBidSalt;
+        emit BidCommitted(msg.sender, hashedBidSalt);
     }
 
     function transitionToReveal() external{
@@ -135,6 +147,7 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         commit = false;
         reveal = true;
         pendingReturns[msg.sender] += commitRevealTransitionFee;
+        emit TransitionToReveal(msg.sender);
     }
 
     function revealBid(uint256 bid, uint256 salt) external payable{
@@ -156,6 +169,7 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
             pendingReturns[msg.sender] += bid + reservePrice;
         }
         bidSaltHashes[msg.sender] = bytes32(0);
+        emit BidRevealed(msg.sender, bid, salt, topBid, secondTopBid);
     }
 
     function transitionToEnd() external {
@@ -167,6 +181,7 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
             pendingReturns[topBidder] += topBid - secondTopBid;
             pendingReturns[seller] += secondTopBid + reservePrice;
         }
+        emit TransitionToEnd(msg.sender);
     }
 
     function getRefund() external {
@@ -174,6 +189,7 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         uint256 refund = pendingReturns[msg.sender];
         pendingReturns[msg.sender] = 0;
         payable(msg.sender).transfer(refund);
+        emit RefundClaimed(msg.sender, refund);
     }
 
     function getNFT() external {
@@ -184,17 +200,19 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         uint256 tokenId = itemTokenId;
         itemTokenId = 0;
         IERC721(itemContractAddress).safeTransferFrom(address(this), topBidder, tokenId);
-
+        emit NFTClaimed(msg.sender, tokenId);
     }
 
     function pullOut() external {
         require(msg.sender == topBidder, "Only winner can pull out.");
         require(auctionOver, "Auction not over yet.");
         require(itemTokenId == 0, "Contract has NFT, pull out not allowed.");
-        pendingReturns[topBidder] += secondTopBid + reservePrice + noPostingFee;
+        uint256 refundAmount = secondTopBid + reservePrice + noPostingFee;
+        pendingReturns[topBidder] += refundAmount;
         topBidder = payable(address(0));
         topBid = 0;
         secondTopBid = 0;
         pulledOut = true;
+        emit PullOut(msg.sender, refundAmount);
     }
 }
