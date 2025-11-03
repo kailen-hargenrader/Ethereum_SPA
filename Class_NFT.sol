@@ -6,6 +6,8 @@ import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
+event Minted(address indexed minter, uint256 tokenId);
+
 contract ClassNFT is ERC721URIStorage, Ownable, Pausable {
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
@@ -24,6 +26,7 @@ contract ClassNFT is ERC721URIStorage, Ownable, Pausable {
         _safeMint(msg.sender, tokenId); // Mints to the caller's address
         _setTokenURI(tokenId, uri);
         _tokenIds.increment();
+        emit Minted(msg.sender, tokenId);
         return tokenId;
     }
 
