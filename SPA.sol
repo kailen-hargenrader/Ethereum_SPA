@@ -66,10 +66,10 @@ event BidRevealed(address indexed bidder, uint256 bid, uint256 salt, uint256 top
 event TransitionToEnd(address indexed caller);
 event RefundClaimed(address indexed bidder, uint256 amount);
 event NFTClaimed(address indexed bidder, uint256 tokenId);
-event PullOut(address indexed bidder, uint256 refundAmount);
+event NFTClaimedBack(address indexed seller, uint256 tokenId);
 
 // SPA
-contract SecondPriceAuction is Ownable, IERC721Receiver {
+contract SecondPriceAuction is IERC721Receiver {
     address payable public seller;
     address payable public topBidder;
     uint256 public topBid;
@@ -82,15 +82,16 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
     uint256 public noPostingFee;
     uint256 public itemTokenId;
     address public itemContractAddress;
+    bool public ownsNFT;
     bool public commit;
     bool public reveal;
     bool public auctionOver;
-    bool public pulledOut;
     mapping(address => bytes32) public bidSaltHashes;
     mapping(address => uint256) public pendingReturns;
 
 
     constructor(
+        address _seller,
         uint256 _reservePrice, 
         uint256 _auctionRevealTime,
         uint256 _auctionEndTime,
@@ -98,12 +99,12 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         uint256 _revealEndTransitionFee,
         uint256 _noPostingFee,
         address _itemContractAddress
-    ) Ownable(msg.sender) payable {
+    ) payable {
         require(_reservePrice > 0, "Reserve price must be greater than zero to prevent griefing attacks.");
         require(_auctionRevealTime > block.timestamp, "Auction has no commit stage.");
         require(_auctionEndTime > _auctionRevealTime, "Auction has no reveal stage.");
         require(msg.value == _commitRevealTransitionFee + _revealEndTransitionFee + _noPostingFee, "Fee value must be included in contract.");
-        seller = payable(msg.sender);
+        seller = payable(_seller);
         reservePrice = _reservePrice;
         auctionRevealTime = _auctionRevealTime;
         auctionEndTime = _auctionEndTime;
@@ -111,11 +112,10 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         revealEndTransitionFee = _revealEndTransitionFee;
         noPostingFee = _noPostingFee;
         itemContractAddress = _itemContractAddress;
+        ownsNFT = false;
         commit = true;
         reveal = false;
         auctionOver = false;
-        pulledOut = false;
-        _transferOwnership(seller);
     }
 
     function onERC721Received(
@@ -124,13 +124,17 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         uint256 tokenId,
         bytes calldata data
     ) external override returns (bytes4) {
-        require(!pulledOut, "Top bidder already pulled out");
+        require(!auctionOver, "Too late to post!");
         require(msg.sender == itemContractAddress, "Item not from correct contract.");
         require(from == seller, "Item must belong to seller.");
         require(operator == seller, "Only seller can post an item for auction.");
-        require(itemTokenId == 0, "Item already posted for auction.");
+        require(!ownsNFT, "Item already posted for auction.");
         itemTokenId = tokenId;
+        ownsNFT = true;
         pendingReturns[seller] += noPostingFee;
+
+        // clear previous approvals
+        // IERC721(itemContractAddress).approve(address(0), tokenId);
         emit NFTPosted(seller, tokenId);
         return IERC721Receiver.onERC721Received.selector;
     }
@@ -156,14 +160,16 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         require(msg.value == bid, "Bid value must match.");
         require(keccak256(abi.encodePacked(bid, salt)) == bidSaltHashes[msg.sender], "Reveal does not match bid.");
         if (topBidder == address(0) && bid >= reservePrice) {
-            topBidder = payable(msg.sender);
             topBid = bid;
+            topBidder = payable(msg.sender);
+            
         }
         else if (bid > topBid) {
             pendingReturns[topBidder] += topBid + reservePrice;
-            topBidder = payable(msg.sender);
             secondTopBid = topBid;
             topBid = bid;
+            topBidder = payable(msg.sender);
+            
         }
         else {
             pendingReturns[msg.sender] += bid + reservePrice;
@@ -177,9 +183,18 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
         reveal = false;
         auctionOver = true;
         pendingReturns[msg.sender] += revealEndTransitionFee;
-        if (topBidder != address(0)) {
-            pendingReturns[topBidder] += topBid - secondTopBid;
-            pendingReturns[seller] += secondTopBid + reservePrice;
+        if (ownsNFT){
+            if (topBidder != address(0)) {
+                pendingReturns[topBidder] += topBid - secondTopBid;
+                pendingReturns[seller] += secondTopBid + reservePrice;
+            } else {
+                topBidder = seller;
+            }
+        } else {
+            if (topBidder != address(0)) {
+                uint256 refundAmount = topBid + reservePrice + noPostingFee;
+                pendingReturns[topBidder] += refundAmount;
+            }
         }
         emit TransitionToEnd(msg.sender);
     }
@@ -194,25 +209,12 @@ contract SecondPriceAuction is Ownable, IERC721Receiver {
 
     function getNFT() external {
         require(auctionOver, "Auction not over yet.");
-        require(itemTokenId != 0, "NFT not owned by contract.");
+        require(ownsNFT, "NFT not owned by contract.");
         require(msg.sender == topBidder, "NFT not owed.");
 
-        uint256 tokenId = itemTokenId;
-        itemTokenId = 0;
-        IERC721(itemContractAddress).safeTransferFrom(address(this), topBidder, tokenId);
-        emit NFTClaimed(msg.sender, tokenId);
-    }
+        ownsNFT = false;
 
-    function pullOut() external {
-        require(msg.sender == topBidder, "Only winner can pull out.");
-        require(auctionOver, "Auction not over yet.");
-        require(itemTokenId == 0, "Contract has NFT, pull out not allowed.");
-        uint256 refundAmount = secondTopBid + reservePrice + noPostingFee;
-        pendingReturns[topBidder] += refundAmount;
-        topBidder = payable(address(0));
-        topBid = 0;
-        secondTopBid = 0;
-        pulledOut = true;
-        emit PullOut(msg.sender, refundAmount);
+        IERC721(itemContractAddress).transferFrom(address(this), topBidder, itemTokenId);
+        emit NFTClaimed(msg.sender, itemTokenId);
     }
 }

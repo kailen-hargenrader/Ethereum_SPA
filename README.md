@@ -15,3 +15,6 @@ A Second Price Auction contract on Ethereum
 11. click safeMint button (costs gas)
 12. Copy token_id (output field) to NFTs.json to keep track of them
 13. Call Owner function on the token_id
+
+### SPAFactory Contract Address on Sepolia
+0x70cc2757fa4af1d9c7ddfec813fd14426cc3a592
